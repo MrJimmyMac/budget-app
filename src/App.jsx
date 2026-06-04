@@ -1,4 +1,21 @@
 import { useState, useEffect, useCallback } from "react";
+import { initializeApp } from "firebase/app";
+import { getFirestore, doc, setDoc, getDoc } from "firebase/firestore";
+
+// ── Firebase config ───────────────────────────────────────────────────────────
+const firebaseConfig = {
+  apiKey: "AIzaSyA9xfuQHTlxrhe9fBIqaSeBMBxKMuDFa7w",
+  authDomain: "budget-app-a291b.firebaseapp.com",
+  projectId: "budget-app-a291b",
+  storageBucket: "budget-app-a291b.firebasestorage.app",
+  messagingSenderId: "391238833896",
+  appId: "1:391238833896:web:54c66c406851bb774d5b5d"
+};
+const firebaseApp = initializeApp(firebaseConfig);
+const db = getFirestore(firebaseApp);
+// ─────────────────────────────────────────────────────────────────────────────
+
+const PASSWORD = "IDigGraves1990"; // ← replace with your real password
 
 const COLORS = ["#6366f1","#f59e0b","#10b981","#ef4444","#3b82f6","#ec4899","#14b8a6","#f97316","#8b5cf6","#84cc16"];
 
@@ -14,36 +31,49 @@ const fmt = n => `$${Number(n).toLocaleString("en-AU", { minimumFractionDigits: 
 const monthKey = (y, m) => `${y}-${String(m+1).padStart(2,"0")}`;
 const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 
-// ── localStorage helpers ──────────────────────────────────────────────────────
-const lsGet = (key, fallback) => {
-  try {
-    const v = localStorage.getItem(key);
-    return v ? JSON.parse(v) : fallback;
-  } catch { return fallback; }
-};
-const lsSet = (key, value) => {
-  try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
-};
-// ─────────────────────────────────────────────────────────────────────────────
-
 export default function App() {
+  const [authed, setAuthed] = useState(false);
+  const [pwInput, setPwInput] = useState("");
+  const [pwError, setPwError] = useState(false);
+
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth());
-  const [categories, setCategories] = useState(() => lsGet("budget:categories", DEFAULT_CATEGORIES));
-  const [expenses, setExpenses] = useState(() => lsGet("budget:expenses", {}));
-  const [income, setIncome] = useState(() => lsGet("budget:income", 5000));
+  const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
+  const [expenses, setExpenses] = useState({});
+  const [income, setIncome] = useState(5000);
   const [view, setView] = useState("dashboard");
   const [activeCategory, setActiveCategory] = useState(null);
   const [form, setForm] = useState({ amount: "", categoryId: "", note: "", date: new Date().toISOString().split("T")[0] });
   const [newCat, setNewCat] = useState({ name: "", budget: "" });
   const [editIncome, setEditIncome] = useState(false);
-  const [incomeInput, setIncomeInput] = useState(income);
+  const [incomeInput, setIncomeInput] = useState(5000);
+  const [loaded, setLoaded] = useState(false);
+  const [saveStatus, setSaveStatus] = useState("");
 
-  const save = useCallback((cats, exps, inc) => {
-    lsSet("budget:categories", cats);
-    lsSet("budget:expenses", exps);
-    lsSet("budget:income", inc);
+  // Load from Firestore
+  useEffect(() => {
+    if (!authed) return;
+    (async () => {
+      try {
+        const snap = await getDoc(doc(db, "budget", "data"));
+        if (snap.exists()) {
+          const d = snap.data();
+          if (d.categories) setCategories(d.categories);
+          if (d.expenses) setExpenses(d.expenses);
+          if (d.income) { setIncome(d.income); setIncomeInput(d.income); }
+        }
+      } catch(e) { console.error(e); }
+      setLoaded(true);
+    })();
+  }, [authed]);
+
+  const save = useCallback(async (cats, exps, inc) => {
+    try {
+      await setDoc(doc(db, "budget", "data"), { categories: cats, expenses: exps, income: inc });
+      setSaveStatus("Saved ✓");
+      setTimeout(() => setSaveStatus(""), 2000);
+    } catch(e) { setSaveStatus("Save failed"); }
   }, []);
 
   const mk = monthKey(year, month);
@@ -102,19 +132,18 @@ export default function App() {
     const slices = totalSpent > 0 ? categories.map(c => {
       const pct = spentByCategory[c.id] / totalSpent;
       const dash = pct * circ;
-      const s = { color: c.color, dash, offset, name: c.name };
+      const s = { color: c.color, dash, offset };
       offset += dash;
       return s;
     }) : [];
     return (
       <svg width="160" height="160" viewBox="0 0 160 160">
-        {totalSpent === 0 ? (
-          <circle cx={cx} cy={cy} r={r} fill="none" stroke="#e5e7eb" strokeWidth="20"/>
-        ) : slices.map((s,i) => (
+        {totalSpent === 0 ? <circle cx={cx} cy={cy} r={r} fill="none" stroke="#e5e7eb" strokeWidth="20"/>
+        : slices.map((s,i) => (
           <circle key={i} cx={cx} cy={cy} r={r} fill="none" stroke={s.color} strokeWidth="20"
-            strokeDasharray={`${s.dash} ${circ - s.dash}`}
-            strokeDashoffset={-s.offset + circ * 0.25}
-            style={{transform:`rotate(-90deg)`,transformOrigin:`${cx}px ${cy}px`}}
+            strokeDasharray={`${s.dash} ${circ-s.dash}`}
+            strokeDashoffset={-s.offset+circ*0.25}
+            style={{transform:"rotate(-90deg)",transformOrigin:`${cx}px ${cy}px`}}
           />
         ))}
         <text x={cx} y={cy-8} textAnchor="middle" fontSize="11" fill="#6b7280">Spent</text>
@@ -123,16 +152,49 @@ export default function App() {
     );
   };
 
-  const base = { fontFamily: "'Inter', system-ui, sans-serif", minHeight: "100vh", background: "#f9fafb", color: "#111827" };
-  const card = { background: "#fff", borderRadius: 12, padding: 20, boxShadow: "0 1px 4px rgba(0,0,0,0.08)", marginBottom: 16 };
-  const btn = (bg="#6366f1",color="#fff") => ({ background: bg, color, border: "none", borderRadius: 8, padding: "8px 16px", cursor: "pointer", fontSize: 14, fontWeight: 600 });
-  const inp = { border: "1.5px solid #e5e7eb", borderRadius: 8, padding: "8px 12px", fontSize: 14, outline: "none", width: "100%", boxSizing: "border-box" };
+  const base = { fontFamily:"'Inter',system-ui,sans-serif", minHeight:"100vh", background:"#f9fafb", color:"#111827" };
+  const card = { background:"#fff", borderRadius:12, padding:20, boxShadow:"0 1px 4px rgba(0,0,0,0.08)", marginBottom:16 };
+  const btn = (bg="#6366f1",color="#fff") => ({ background:bg, color, border:"none", borderRadius:8, padding:"8px 16px", cursor:"pointer", fontSize:14, fontWeight:600 });
+  const inp = { border:"1.5px solid #e5e7eb", borderRadius:8, padding:"8px 12px", fontSize:14, outline:"none", width:"100%", boxSizing:"border-box" };
 
+  // ── Password screen ──
+  if (!authed) {
+    return (
+      <div style={{...base,display:"flex",alignItems:"center",justifyContent:"center"}}>
+        <div style={{...card,width:300,textAlign:"center"}}>
+          <div style={{fontSize:32,marginBottom:8}}>💰</div>
+          <h2 style={{margin:"0 0 20px",fontSize:20}}>Budget Tracker</h2>
+          <input
+            style={{...inp,marginBottom:10,textAlign:"center",letterSpacing:2}}
+            type="password"
+            placeholder="Enter password"
+            value={pwInput}
+            onChange={e => { setPwInput(e.target.value); setPwError(false); }}
+            onKeyDown={e => {
+              if (e.key === "Enter") {
+                if (pwInput === PASSWORD) setAuthed(true);
+                else setPwError(true);
+              }
+            }}
+          />
+          {pwError && <div style={{color:"#ef4444",fontSize:13,marginBottom:8}}>Incorrect password</div>}
+          <button style={{...btn(),width:"100%",padding:10}} onClick={() => {
+            if (pwInput === PASSWORD) setAuthed(true);
+            else setPwError(true);
+          }}>Unlock</button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!loaded) return <div style={{...base,display:"flex",alignItems:"center",justifyContent:"center",color:"#6b7280"}}>Loading...</div>;
+
+  // ── Category drill-down ──
   if (view === "category" && activeCategory) {
     const cat = categories.find(c => c.id === activeCategory);
     const catExps = monthExpenses.filter(e => e.categoryId === activeCategory).sort((a,b) => new Date(b.date)-new Date(a.date));
     const spent = spentByCategory[activeCategory] || 0;
-    const pct = Math.min((spent / cat.budget) * 100, 100);
+    const pct = Math.min((spent/cat.budget)*100,100);
     return (
       <div style={base}>
         <div style={{maxWidth:600,margin:"0 auto",padding:"20px 16px"}}>
@@ -149,16 +211,17 @@ export default function App() {
               <div style={{height:"100%",width:`${pct}%`,background:pct>=100?"#ef4444":cat.color,borderRadius:99,transition:"width .4s"}}/>
             </div>
             <div style={{fontSize:14,color:spent>cat.budget?"#ef4444":"#10b981",fontWeight:600}}>
-              {spent > cat.budget ? `${fmt(spent-cat.budget)} over budget` : `${fmt(cat.budget-spent)} remaining`}
+              {spent>cat.budget?`${fmt(spent-cat.budget)} over budget`:`${fmt(cat.budget-spent)} remaining`}
             </div>
           </div>
           <div style={card}>
             <h3 style={{margin:"0 0 16px",fontSize:16}}>Expenses — {MONTHS[month]} {year}</h3>
-            {catExps.length === 0 ? <p style={{color:"#9ca3af",fontSize:14,margin:0}}>No expenses logged this month.</p> : catExps.map(e => (
+            {catExps.length===0 ? <p style={{color:"#9ca3af",fontSize:14,margin:0}}>No expenses logged this month.</p>
+            : catExps.map(e => (
               <div key={e.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 0",borderBottom:"1px solid #f3f4f6"}}>
                 <div>
                   <div style={{fontWeight:600,fontSize:15}}>{fmt(e.amount)}</div>
-                  <div style={{fontSize:13,color:"#6b7280"}}>{e.note || "—"} · {e.date}</div>
+                  <div style={{fontSize:13,color:"#6b7280"}}>{e.note||"—"} · {e.date}</div>
                 </div>
                 <button onClick={() => deleteExpense(e.id)} style={{...btn("#fee2e2","#ef4444"),padding:"4px 10px",fontSize:13}}>✕</button>
               </div>
@@ -169,6 +232,7 @@ export default function App() {
     );
   }
 
+  // ── Settings ──
   if (view === "settings") {
     return (
       <div style={base}>
@@ -214,11 +278,15 @@ export default function App() {
     );
   }
 
+  // ── Dashboard ──
   return (
     <div style={base}>
       <div style={{maxWidth:640,margin:"0 auto",padding:"20px 16px"}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20}}>
-          <h1 style={{margin:0,fontSize:22,fontWeight:800}}>💰 Budget Tracker</h1>
+          <div>
+            <h1 style={{margin:0,fontSize:22,fontWeight:800}}>💰 Budget Tracker</h1>
+            {saveStatus && <span style={{fontSize:12,color:"#10b981"}}>{saveStatus}</span>}
+          </div>
           <button style={btn("#f3f4f6","#374151")} onClick={()=>setView("settings")}>⚙ Settings</button>
         </div>
 
@@ -252,9 +320,9 @@ export default function App() {
         <div style={card}>
           <h3 style={{margin:"0 0 14px",fontSize:16}}>Categories</h3>
           {categories.map(c => {
-            const spent = spentByCategory[c.id] || 0;
-            const pct = Math.min((spent / c.budget) * 100, 100);
-            const over = spent > c.budget;
+            const spent = spentByCategory[c.id]||0;
+            const pct = Math.min((spent/c.budget)*100,100);
+            const over = spent>c.budget;
             return (
               <div key={c.id} style={{marginBottom:14,cursor:"pointer"}} onClick={()=>{setActiveCategory(c.id);setView("category");}}>
                 <div style={{display:"flex",justifyContent:"space-between",fontSize:14,marginBottom:4}}>
@@ -293,7 +361,7 @@ export default function App() {
 
         <div style={card}>
           <h3 style={{margin:"0 0 14px",fontSize:16}}>Recent Expenses</h3>
-          {monthExpenses.length === 0 ? <p style={{color:"#9ca3af",fontSize:14,margin:0}}>No expenses logged this month.</p>
+          {monthExpenses.length===0 ? <p style={{color:"#9ca3af",fontSize:14,margin:0}}>No expenses logged this month.</p>
           : [...monthExpenses].sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,8).map(e => {
             const cat = categories.find(c=>c.id===e.categoryId);
             return (
