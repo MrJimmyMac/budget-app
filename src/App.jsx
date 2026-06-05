@@ -15,7 +15,7 @@ const firebaseApp = initializeApp(firebaseConfig);
 const db = getFirestore(firebaseApp);
 // ─────────────────────────────────────────────────────────────────────────────
 
-const PASSWORD = "IDigGraves1990";
+const PASSWORD = "MYPASSWORD"; // ← replace with your real password
 
 const COLORS = ["#6366f1","#f59e0b","#10b981","#ef4444","#3b82f6","#ec4899","#14b8a6","#f97316","#8b5cf6","#84cc16"];
 
@@ -105,10 +105,16 @@ export default function App() {
 
   const addCategory = () => {
     if (!newCat.name || !newCat.budget || isNaN(Number(newCat.budget))) return;
-    const c = { id: Date.now(), name: newCat.name, budget: Number(newCat.budget), color: COLORS[categories.length % COLORS.length] };
+    const c = { id: Date.now(), name: newCat.name, budget: Number(newCat.budget), color: newCat.color || COLORS[categories.length % COLORS.length] };
     const updated = [...categories, c];
     setCategories(updated);
-    setNewCat({ name: "", budget: "" });
+    setNewCat({ name: "", budget: "", color: COLORS[categories.length % COLORS.length] });
+    save(updated, expenses, income);
+  };
+
+  const updateCategoryColor = (id, color) => {
+    const updated = categories.map(c => c.id === id ? { ...c, color } : c);
+    setCategories(updated);
     save(updated, expenses, income);
   };
 
@@ -258,7 +264,11 @@ export default function App() {
             {categories.map(c => (
               <div key={c.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 0",borderBottom:"1px solid #f3f4f6"}}>
                 <div style={{display:"flex",alignItems:"center",gap:10}}>
-                  <div style={{width:12,height:12,borderRadius:"50%",background:c.color}}/>
+                  <div style={{position:"relative",width:24,height:24}}>
+                    <div style={{width:24,height:24,borderRadius:"50%",background:c.color,cursor:"pointer",border:"2px solid #e5e7eb"}}/>
+                    <input type="color" value={c.color} onChange={e=>updateCategoryColor(c.id,e.target.value)}
+                      style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",opacity:0,cursor:"pointer",borderRadius:"50%"}}/>
+                  </div>
                   <span style={{fontWeight:500}}>{c.name}</span>
                 </div>
                 <div style={{display:"flex",alignItems:"center",gap:8}}>
@@ -270,6 +280,8 @@ export default function App() {
             <div style={{display:"flex",gap:8,marginTop:16,flexWrap:"wrap"}}>
               <input style={{...inp,width:130,flex:1}} placeholder="Category name" value={newCat.name} onChange={e=>setNewCat(n=>({...n,name:e.target.value}))}/>
               <input style={{...inp,width:100,flex:"0 0 100px"}} placeholder="Budget $" type="number" value={newCat.budget} onChange={e=>setNewCat(n=>({...n,budget:e.target.value}))}/>
+              <input type="color" value={newCat.color||COLORS[categories.length%COLORS.length]} onChange={e=>setNewCat(n=>({...n,color:e.target.value}))}
+                style={{width:36,height:36,borderRadius:8,border:"1.5px solid #e5e7eb",cursor:"pointer",padding:2}}/>
               <button style={btn()} onClick={addCategory}>Add</button>
             </div>
           </div>
