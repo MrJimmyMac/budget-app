@@ -1,4 +1,21 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { initializeApp } from "firebase/app";
+import { getFirestore, doc, setDoc, getDoc } from "firebase/firestore";
+
+// ── Firebase config ───────────────────────────────────────────────────────────
+const firebaseConfig = {
+  apiKey: "AIzaSyA9xfuQHTlxrhe9fBIqaSeBMBxKMuDFa7w",
+  authDomain: "budget-app-a291b.firebaseapp.com",
+  projectId: "budget-app-a291b",
+  storageBucket: "budget-app-a291b.firebasestorage.app",
+  messagingSenderId: "391238833896",
+  appId: "1:391238833896:web:54c66c406851bb774d5b5d"
+};
+const firebaseApp = initializeApp(firebaseConfig);
+const db = getFirestore(firebaseApp);
+// ─────────────────────────────────────────────────────────────────────────────
+
+const PASSWORD = "MYPASSWORD";
 
 const COLORS = ["#6366f1","#f59e0b","#10b981","#ef4444","#3b82f6","#ec4899","#14b8a6","#f97316","#8b5cf6","#84cc16"];
 
@@ -14,46 +31,60 @@ const fmt = n => `$${Number(n).toLocaleString("en-AU", { minimumFractionDigits: 
 const monthKey = (y, m) => `${y}-${String(m+1).padStart(2,"0")}`;
 const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 
-// ── localStorage helpers ──────────────────────────────────────────────────────
-const lsGet = (key, fallback) => {
-  try {
-    const v = localStorage.getItem(key);
-    return v ? JSON.parse(v) : fallback;
-  } catch { return fallback; }
-};
-const lsSet = (key, value) => {
-  try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
-};
-// ─────────────────────────────────────────────────────────────────────────────
-
 export default function App() {
+  const [authed, setAuthed] = useState(false);
+  const [pwInput, setPwInput] = useState("");
+  const [pwError, setPwError] = useState(false);
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth());
-  const [categories, setCategories] = useState(() => lsGet("budget:categories", DEFAULT_CATEGORIES));
-  const [expenses, setExpenses] = useState(() => lsGet("budget:expenses", {}));
-  const [income, setIncome] = useState(() => lsGet("budget:income", 5000));
+  const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
+  const [expenses, setExpenses] = useState({});
+  const [income, setIncome] = useState(5000);
   const [view, setView] = useState("dashboard");
   const [activeCategory, setActiveCategory] = useState(null);
   const [form, setForm] = useState({ amount: "", categoryId: "", note: "", date: new Date().toISOString().split("T")[0] });
-  const [newCat, setNewCat] = useState({ name: "", budget: "" });
+  const [newCat, setNewCat] = useState({ name: "", budget: "", color: COLORS[0] });
   const [editIncome, setEditIncome] = useState(false);
-  const [incomeInput, setIncomeInput] = useState(income);
+  const [incomeInput, setIncomeInput] = useState(5000);
+  const [loaded, setLoaded] = useState(false);
+  const [saveStatus, setSaveStatus] = useState("");
+  const [importRows, setImportRows] = useState([]);
+  const [unmatchedQueue, setUnmatchedQueue] = useState([]);
+  const [currentUnmatched, setCurrentUnmatched] = useState(null);
+  const [importStatus, setImportStatus] = useState("");
+  const fileRef = useRef();
 
-  const save = useCallback((cats, exps, inc) => {
-    lsSet("budget:categories", cats);
-    lsSet("budget:expenses", exps);
-    lsSet("budget:income", inc);
+  useEffect(() => {
+    if (!authed) return;
+    (async () => {
+      try {
+        const snap = await getDoc(doc(db, "budget", "data"));
+        if (snap.exists()) {
+          const d = snap.data();
+          if (d.categories) setCategories(d.categories);
+          if (d.expenses) setExpenses(d.expenses);
+          if (d.income) { setIncome(d.income); setIncomeInput(d.income); }
+        }
+      } catch(e) { console.error(e); }
+      setLoaded(true);
+    })();
+  }, [authed]);
+
+  const save = useCallback(async (cats, exps, inc) => {
+    try {
+      await setDoc(doc(db, "budget", "data"), { categories: cats, expenses: exps, income: inc });
+      setSaveStatus("Saved ✓");
+      setTimeout(() => setSaveStatus(""), 2000);
+    } catch(e) { setSaveStatus("Save failed"); }
   }, []);
 
   const mk = monthKey(year, month);
   const monthExpenses = expenses[mk] || [];
-
   const spentByCategory = categories.reduce((acc, c) => {
     acc[c.id] = monthExpenses.filter(e => e.categoryId === c.id).reduce((s, e) => s + Number(e.amount), 0);
     return acc;
   }, {});
-
   const totalBudget = categories.reduce((s, c) => s + Number(c.budget), 0);
   const totalSpent = Object.values(spentByCategory).reduce((s, v) => s + v, 0);
   const totalRemaining = income - totalSpent;
@@ -75,15 +106,21 @@ export default function App() {
 
   const addCategory = () => {
     if (!newCat.name || !newCat.budget || isNaN(Number(newCat.budget))) return;
-    const c = { id: Date.now(), name: newCat.name, budget: Number(newCat.budget), color: COLORS[categories.length % COLORS.length] };
+    const c = { id: Date.now(), name: newCat.name, budget: Number(newCat.budget), color: newCat.color || COLORS[categories.length % COLORS.length] };
     const updated = [...categories, c];
     setCategories(updated);
-    setNewCat({ name: "", budget: "" });
+    setNewCat({ name: "", budget: "", color: COLORS[updated.length % COLORS.length] });
     save(updated, expenses, income);
   };
 
   const deleteCategory = (id) => {
     const updated = categories.filter(c => c.id !== id);
+    setCategories(updated);
+    save(updated, expenses, income);
+  };
+
+  const updateCategoryColor = (id, color) => {
+    const updated = categories.map(c => c.id === id ? { ...c, color } : c);
     setCategories(updated);
     save(updated, expenses, income);
   };
@@ -96,25 +133,182 @@ export default function App() {
   const prevMonth = () => { if (month === 0) { setMonth(11); setYear(y => y-1); } else setMonth(m => m-1); };
   const nextMonth = () => { if (month === 11) { setMonth(0); setYear(y => y+1); } else setMonth(m => m+1); };
 
+  // ── Download template ──
+  const downloadTemplate = () => {
+    const catNames = categories.map(c => c.name).join(", ");
+    const rows = [
+      ["Date", "Amount", "Description", "Category"],
+      ["", "", `Available categories: ${catNames}`, ""],
+      ["26/06/2026", "45.50", "Woolworths", "Food"],
+      ["25/06/2026", "120.00", "Shell Petrol", "Transport"],
+    ];
+    const csv = rows.map(r => r.map(v => `"${v}"`).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "budget_import_template.csv";
+    a.click();
+  };
+
+  // ── Detect CSV format ──
+  const detectFormat = (headers) => {
+    // CommBank: Date, Amount, Description, Balance (no Category column)
+    if (headers.includes("date") && headers.includes("amount") && headers.includes("description") && headers.includes("balance") && !headers.includes("category"))
+      return "commbank";
+    // Template format
+    if (headers.includes("date") && headers.includes("amount") && headers.includes("category"))
+      return "template";
+    return "unknown";
+  };
+
+  // ── Parse CSV ──
+  const parseCSV = (text) => {
+    const lines = text.trim().split("\n").filter(l => l.trim());
+    const headers = lines[0].split(",").map(h => h.replace(/"/g, "").trim().toLowerCase());
+    const format = detectFormat(headers);
+    if (format === "unknown") return null;
+
+    const dateIdx = headers.indexOf("date");
+    const amountIdx = headers.indexOf("amount");
+    const descIdx = headers.indexOf("description");
+    const catIdx = headers.indexOf("category");
+
+    const parseDate = (raw) => {
+      if (!raw) return "";
+      if (raw.includes("/")) {
+        const [d, m, y] = raw.split("/");
+        return `${y}-${m.padStart(2,"0")}-${d.padStart(2,"0")}`;
+      }
+      return raw;
+    };
+
+    const cleanDesc = (desc) => {
+      // Strip trailing numbers/codes from CommBank descriptions e.g. "WOOLWORTHS 1234 SYDNEY"
+      return desc.replace(/\s+\d{4,}\s*/g, " ").trim();
+    };
+
+    const rows = [];
+    for (let i = 1; i < lines.length; i++) {
+      const cols = lines[i].match(/(".*?"|[^,]+)(?=,|$)/g) || [];
+      const clean = cols.map(c => c.replace(/"/g, "").trim());
+      const rawDate = clean[dateIdx] || "";
+      const date = parseDate(rawDate);
+      const rawAmount = clean[amountIdx] || "0";
+      // CommBank uses negative for debits — take absolute value
+      const amount = Math.abs(parseFloat(rawAmount.replace(/[^0-9.-]/g, "")));
+      const desc = cleanDesc(clean[descIdx] || "");
+
+      if (format === "commbank") {
+        // CommBank format — category comes from added column or defaults to unmatched
+        const catName = catIdx !== -1 ? (clean[catIdx] || "") : "";
+        if (!catName) continue; // skip rows without category
+        if (isNaN(amount) || amount <= 0) continue;
+        // skip credits (positive in CommBank = money in)
+        if (parseFloat(rawAmount) > 0) continue;
+        rows.push({ date, amount, note: desc, categoryName: catName });
+      } else {
+        // Template format
+        const catName = clean[catIdx] || "";
+        if (!catName || catName.startsWith("Available")) continue;
+        if (isNaN(amount) || amount <= 0) continue;
+        rows.push({ date, amount, note: desc, categoryName: catName });
+      }
+    }
+    return rows;
+  };
+
+  const handleFileUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const rows = parseCSV(ev.target.result);
+      if (!rows || rows.length === 0) { setImportStatus("Could not read file — check the format matches the template."); return; }
+      // find unmatched categories
+      const unmatched = [...new Set(rows.map(r => r.categoryName).filter(n => !categories.find(c => c.name.toLowerCase() === n.toLowerCase())))];
+      setImportRows(rows);
+      if (unmatched.length > 0) {
+        setUnmatchedQueue(unmatched);
+        setCurrentUnmatched({ name: unmatched[0], action: null, mapTo: "" });
+      } else {
+        commitImport(rows, {}, categories, expenses);
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  };
+
+  const handleUnmatchedDecision = (action, mapTo) => {
+    const resolved = { ...currentUnmatched, action, mapTo };
+    const remaining = unmatchedQueue.slice(1);
+    const resolutionMap = { [resolved.name]: resolved };
+
+    if (remaining.length > 0) {
+      setUnmatchedQueue(remaining);
+      setCurrentUnmatched({ name: remaining[0], action: null, mapTo: "" });
+      // store resolutions to apply later
+      setCurrentUnmatched(prev => ({ ...prev, _resolutions: { ...(prev?._resolutions || {}), ...resolutionMap } }));
+    } else {
+      // all resolved — commit
+      const allResolutions = { ...(currentUnmatched?._resolutions || {}), ...resolutionMap };
+      let updatedCats = [...categories];
+      // create new categories where needed
+      Object.values(allResolutions).forEach(r => {
+        if (r.action === "create") {
+          updatedCats = [...updatedCats, { id: Date.now() + Math.random(), name: r.name, budget: 200, color: COLORS[updatedCats.length % COLORS.length] }];
+        }
+      });
+      setUnmatchedQueue([]);
+      setCurrentUnmatched(null);
+      commitImport(importRows, allResolutions, updatedCats, expenses);
+      if (updatedCats.length !== categories.length) setCategories(updatedCats);
+    }
+  };
+
+  const commitImport = (rows, resolutions, cats, exps) => {
+    const newExps = { ...exps };
+    let added = 0;
+    rows.forEach(row => {
+      let catName = row.categoryName;
+      const resolution = resolutions[catName];
+      if (resolution) {
+        if (resolution.action === "skip") return;
+        if (resolution.action === "remap") catName = resolution.mapTo;
+        if (resolution.action === "create") catName = resolution.name;
+      }
+      const cat = cats.find(c => c.name.toLowerCase() === catName.toLowerCase());
+      if (!cat) return;
+      // derive month key from date
+      const d = new Date(row.date);
+      const mk = monthKey(d.getFullYear(), d.getMonth());
+      if (!newExps[mk]) newExps[mk] = [];
+      newExps[mk].push({ id: Date.now() + Math.random(), amount: row.amount, categoryId: cat.id, note: row.note, date: row.date });
+      added++;
+    });
+    setExpenses(newExps);
+    save(cats, newExps, income);
+    setImportStatus(`✓ ${added} transaction${added !== 1 ? "s" : ""} imported successfully!`);
+    setTimeout(() => setImportStatus(""), 4000);
+  };
+
   const DonutChart = () => {
     const r = 60, cx = 80, cy = 80, circ = 2 * Math.PI * r;
     let offset = 0;
     const slices = totalSpent > 0 ? categories.map(c => {
       const pct = spentByCategory[c.id] / totalSpent;
       const dash = pct * circ;
-      const s = { color: c.color, dash, offset, name: c.name };
+      const s = { color: c.color, dash, offset };
       offset += dash;
       return s;
     }) : [];
     return (
       <svg width="160" height="160" viewBox="0 0 160 160">
-        {totalSpent === 0 ? (
-          <circle cx={cx} cy={cy} r={r} fill="none" stroke="#e5e7eb" strokeWidth="20"/>
-        ) : slices.map((s,i) => (
+        {totalSpent === 0 ? <circle cx={cx} cy={cy} r={r} fill="none" stroke="#e5e7eb" strokeWidth="20"/>
+        : slices.map((s,i) => (
           <circle key={i} cx={cx} cy={cy} r={r} fill="none" stroke={s.color} strokeWidth="20"
-            strokeDasharray={`${s.dash} ${circ - s.dash}`}
-            strokeDashoffset={-s.offset + circ * 0.25}
-            style={{transform:`rotate(-90deg)`,transformOrigin:`${cx}px ${cy}px`}}
+            strokeDasharray={`${s.dash} ${circ-s.dash}`}
+            strokeDashoffset={-s.offset+circ*0.25}
+            style={{transform:"rotate(-90deg)",transformOrigin:`${cx}px ${cy}px`}}
           />
         ))}
         <text x={cx} y={cy-8} textAnchor="middle" fontSize="11" fill="#6b7280">Spent</text>
@@ -123,16 +317,74 @@ export default function App() {
     );
   };
 
-  const base = { fontFamily: "'Inter', system-ui, sans-serif", minHeight: "100vh", background: "#f9fafb", color: "#111827" };
-  const card = { background: "#fff", borderRadius: 12, padding: 20, boxShadow: "0 1px 4px rgba(0,0,0,0.08)", marginBottom: 16 };
-  const btn = (bg="#6366f1",color="#fff") => ({ background: bg, color, border: "none", borderRadius: 8, padding: "8px 16px", cursor: "pointer", fontSize: 14, fontWeight: 600 });
-  const inp = { border: "1.5px solid #e5e7eb", borderRadius: 8, padding: "8px 12px", fontSize: 14, outline: "none", width: "100%", boxSizing: "border-box" };
+  const base = { fontFamily:"'Inter',system-ui,sans-serif", minHeight:"100vh", background:"#f9fafb", color:"#111827" };
+  const card = { background:"#fff", borderRadius:12, padding:20, boxShadow:"0 1px 4px rgba(0,0,0,0.08)", marginBottom:16 };
+  const btn = (bg="#6366f1",color="#fff") => ({ background:bg, color, border:"none", borderRadius:8, padding:"8px 16px", cursor:"pointer", fontSize:14, fontWeight:600 });
+  const inp = { border:"1.5px solid #e5e7eb", borderRadius:8, padding:"8px 12px", fontSize:14, outline:"none", width:"100%", boxSizing:"border-box" };
 
+  // ── Password screen ──
+  if (!authed) {
+    return (
+      <div style={{...base,display:"flex",alignItems:"center",justifyContent:"center"}}>
+        <div style={{...card,width:300,textAlign:"center"}}>
+          <div style={{fontSize:32,marginBottom:8}}>💰</div>
+          <h2 style={{margin:"0 0 20px",fontSize:20}}>Budget Tracker</h2>
+          <input style={{...inp,marginBottom:10,textAlign:"center",letterSpacing:2}} type="password" placeholder="Enter password"
+            value={pwInput} onChange={e=>{setPwInput(e.target.value);setPwError(false);}}
+            onKeyDown={e=>{if(e.key==="Enter"){if(pwInput===PASSWORD)setAuthed(true);else setPwError(true);}}}/>
+          {pwError && <div style={{color:"#ef4444",fontSize:13,marginBottom:8}}>Incorrect password</div>}
+          <button style={{...btn(),width:"100%",padding:10}} onClick={()=>{if(pwInput===PASSWORD)setAuthed(true);else setPwError(true);}}>Unlock</button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!loaded) return <div style={{...base,display:"flex",alignItems:"center",justifyContent:"center",color:"#6b7280"}}>Loading...</div>;
+
+  // ── Unmatched category dialog ──
+  if (currentUnmatched && !currentUnmatched._resolutions && unmatchedQueue.length > 0 || currentUnmatched?.action === null) {
+    return (
+      <div style={{...base,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+        <div style={{...card,maxWidth:420,width:"100%"}}>
+          <h3 style={{margin:"0 0 8px",fontSize:18}}>Unknown Category</h3>
+          <p style={{color:"#6b7280",fontSize:14,margin:"0 0 20px"}}>
+            The category <strong>"{currentUnmatched.name}"</strong> wasn't found in your app. What would you like to do?
+          </p>
+          <div style={{display:"flex",flexDirection:"column",gap:10}}>
+            <button style={{...btn("#10b981"),textAlign:"left",padding:"12px 16px"}}
+              onClick={()=>handleUnmatchedDecision("create", currentUnmatched.name)}>
+              ✨ Create "{currentUnmatched.name}" as a new category
+            </button>
+            <div style={{border:"1.5px solid #e5e7eb",borderRadius:8,padding:12}}>
+              <div style={{fontSize:13,color:"#6b7280",marginBottom:8}}>Map to an existing category:</div>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                {categories.map(c => (
+                  <button key={c.id} style={{...btn("#f3f4f6","#374151"),padding:"6px 12px",fontSize:13}}
+                    onClick={()=>handleUnmatchedDecision("remap", c.name)}>
+                    {c.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <button style={{...btn("#fee2e2","#ef4444"),textAlign:"left",padding:"12px 16px"}}
+              onClick={()=>handleUnmatchedDecision("skip", "")}>
+              ✕ Skip all "{currentUnmatched.name}" transactions
+            </button>
+          </div>
+          <div style={{fontSize:13,color:"#9ca3af",marginTop:12}}>
+            {unmatchedQueue.length} unmatched categor{unmatchedQueue.length!==1?"ies":"y"} remaining
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Category drill-down ──
   if (view === "category" && activeCategory) {
     const cat = categories.find(c => c.id === activeCategory);
     const catExps = monthExpenses.filter(e => e.categoryId === activeCategory).sort((a,b) => new Date(b.date)-new Date(a.date));
     const spent = spentByCategory[activeCategory] || 0;
-    const pct = Math.min((spent / cat.budget) * 100, 100);
+    const pct = Math.min((spent/cat.budget)*100,100);
     return (
       <div style={base}>
         <div style={{maxWidth:600,margin:"0 auto",padding:"20px 16px"}}>
@@ -149,16 +401,17 @@ export default function App() {
               <div style={{height:"100%",width:`${pct}%`,background:pct>=100?"#ef4444":cat.color,borderRadius:99,transition:"width .4s"}}/>
             </div>
             <div style={{fontSize:14,color:spent>cat.budget?"#ef4444":"#10b981",fontWeight:600}}>
-              {spent > cat.budget ? `${fmt(spent-cat.budget)} over budget` : `${fmt(cat.budget-spent)} remaining`}
+              {spent>cat.budget?`${fmt(spent-cat.budget)} over budget`:`${fmt(cat.budget-spent)} remaining`}
             </div>
           </div>
           <div style={card}>
             <h3 style={{margin:"0 0 16px",fontSize:16}}>Expenses — {MONTHS[month]} {year}</h3>
-            {catExps.length === 0 ? <p style={{color:"#9ca3af",fontSize:14,margin:0}}>No expenses logged this month.</p> : catExps.map(e => (
+            {catExps.length===0 ? <p style={{color:"#9ca3af",fontSize:14,margin:0}}>No expenses logged this month.</p>
+            : catExps.map(e => (
               <div key={e.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 0",borderBottom:"1px solid #f3f4f6"}}>
                 <div>
                   <div style={{fontWeight:600,fontSize:15}}>{fmt(e.amount)}</div>
-                  <div style={{fontSize:13,color:"#6b7280"}}>{e.note || "—"} · {e.date}</div>
+                  <div style={{fontSize:13,color:"#6b7280"}}>{e.note||"—"} · {e.date}</div>
                 </div>
                 <button onClick={() => deleteExpense(e.id)} style={{...btn("#fee2e2","#ef4444"),padding:"4px 10px",fontSize:13}}>✕</button>
               </div>
@@ -169,6 +422,7 @@ export default function App() {
     );
   }
 
+  // ── Settings ──
   if (view === "settings") {
     return (
       <div style={base}>
@@ -194,7 +448,11 @@ export default function App() {
             {categories.map(c => (
               <div key={c.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 0",borderBottom:"1px solid #f3f4f6"}}>
                 <div style={{display:"flex",alignItems:"center",gap:10}}>
-                  <div style={{width:12,height:12,borderRadius:"50%",background:c.color}}/>
+                  <div style={{position:"relative",width:24,height:24}}>
+                    <div style={{width:24,height:24,borderRadius:"50%",background:c.color,cursor:"pointer",border:"2px solid #e5e7eb"}}/>
+                    <input type="color" value={c.color} onChange={e=>updateCategoryColor(c.id,e.target.value)}
+                      style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",opacity:0,cursor:"pointer"}}/>
+                  </div>
                   <span style={{fontWeight:500}}>{c.name}</span>
                 </div>
                 <div style={{display:"flex",alignItems:"center",gap:8}}>
@@ -206,19 +464,39 @@ export default function App() {
             <div style={{display:"flex",gap:8,marginTop:16,flexWrap:"wrap"}}>
               <input style={{...inp,width:130,flex:1}} placeholder="Category name" value={newCat.name} onChange={e=>setNewCat(n=>({...n,name:e.target.value}))}/>
               <input style={{...inp,width:100,flex:"0 0 100px"}} placeholder="Budget $" type="number" value={newCat.budget} onChange={e=>setNewCat(n=>({...n,budget:e.target.value}))}/>
+              <input type="color" value={newCat.color} onChange={e=>setNewCat(n=>({...n,color:e.target.value}))}
+                style={{width:36,height:36,borderRadius:8,border:"1.5px solid #e5e7eb",cursor:"pointer",padding:2}}/>
               <button style={btn()} onClick={addCategory}>Add</button>
             </div>
+          </div>
+
+          {/* Import / Export */}
+          <div style={card}>
+            <h3 style={{margin:"0 0 8px",fontSize:16}}>Import from CSV</h3>
+            <p style={{fontSize:13,color:"#6b7280",margin:"0 0 14px"}}>
+              Download the template, fill it in Excel, then upload it here.
+            </p>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+              <button style={btn("#f3f4f6","#374151")} onClick={downloadTemplate}>⬇ Download Template</button>
+              <button style={btn()} onClick={()=>fileRef.current.click()}>⬆ Upload CSV</button>
+              <input ref={fileRef} type="file" accept=".csv" style={{display:"none"}} onChange={handleFileUpload}/>
+            </div>
+            {importStatus && <div style={{marginTop:12,fontSize:14,color:importStatus.startsWith("✓")?"#10b981":"#ef4444",fontWeight:600}}>{importStatus}</div>}
           </div>
         </div>
       </div>
     );
   }
 
+  // ── Dashboard ──
   return (
     <div style={base}>
       <div style={{maxWidth:640,margin:"0 auto",padding:"20px 16px"}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20}}>
-          <h1 style={{margin:0,fontSize:22,fontWeight:800}}>💰 Budget Tracker</h1>
+          <div>
+            <h1 style={{margin:0,fontSize:22,fontWeight:800}}>💰 Budget Tracker</h1>
+            {saveStatus && <span style={{fontSize:12,color:"#10b981"}}>{saveStatus}</span>}
+          </div>
           <button style={btn("#f3f4f6","#374151")} onClick={()=>setView("settings")}>⚙ Settings</button>
         </div>
 
@@ -252,9 +530,9 @@ export default function App() {
         <div style={card}>
           <h3 style={{margin:"0 0 14px",fontSize:16}}>Categories</h3>
           {categories.map(c => {
-            const spent = spentByCategory[c.id] || 0;
-            const pct = Math.min((spent / c.budget) * 100, 100);
-            const over = spent > c.budget;
+            const spent = spentByCategory[c.id]||0;
+            const pct = Math.min((spent/c.budget)*100,100);
+            const over = spent>c.budget;
             return (
               <div key={c.id} style={{marginBottom:14,cursor:"pointer"}} onClick={()=>{setActiveCategory(c.id);setView("category");}}>
                 <div style={{display:"flex",justifyContent:"space-between",fontSize:14,marginBottom:4}}>
@@ -293,7 +571,7 @@ export default function App() {
 
         <div style={card}>
           <h3 style={{margin:"0 0 14px",fontSize:16}}>Recent Expenses</h3>
-          {monthExpenses.length === 0 ? <p style={{color:"#9ca3af",fontSize:14,margin:0}}>No expenses logged this month.</p>
+          {monthExpenses.length===0 ? <p style={{color:"#9ca3af",fontSize:14,margin:0}}>No expenses logged this month.</p>
           : [...monthExpenses].sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,8).map(e => {
             const cat = categories.find(c=>c.id===e.categoryId);
             return (
