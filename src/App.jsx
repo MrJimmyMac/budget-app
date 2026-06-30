@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { initializeApp } from "firebase/app";
 import { getFirestore, doc, setDoc, getDoc } from "firebase/firestore";
+import * as XLSX from "xlsx";
 
 // ── Firebase config ───────────────────────────────────────────────────────────
 const firebaseConfig = {
@@ -53,7 +54,8 @@ export default function App() {
   const [unmatchedQueue, setUnmatchedQueue] = useState([]);
   const [currentUnmatched, setCurrentUnmatched] = useState(null);
   const [importStatus, setImportStatus] = useState("");
-  const fileRef = useRef();
+  const [editingCatId, setEditingCatId] = useState(null);
+  const [editCatForm, setEditCatForm] = useState({ name: "", budget: "" });
 
   useEffect(() => {
     if (!authed) return;
@@ -125,6 +127,13 @@ export default function App() {
     save(updated, expenses, income);
   };
 
+  const updateCategoryDetails = (id, name, budget) => {
+    if (!name || !budget || isNaN(Number(budget))) return;
+    const updated = categories.map(c => c.id === id ? { ...c, name, budget: Number(budget) } : c);
+    setCategories(updated);
+    save(updated, expenses, income);
+  };
+
   const saveIncome = () => {
     const v = Number(incomeInput);
     if (!isNaN(v) && v > 0) { setIncome(v); setEditIncome(false); save(categories, expenses, v); }
@@ -133,21 +142,32 @@ export default function App() {
   const prevMonth = () => { if (month === 0) { setMonth(11); setYear(y => y-1); } else setMonth(m => m-1); };
   const nextMonth = () => { if (month === 11) { setMonth(0); setYear(y => y+1); } else setMonth(m => m+1); };
 
-  // ── Download template ──
+  // ── Download template (Excel with dropdown) ──
   const downloadTemplate = () => {
-    const catNames = categories.map(c => c.name).join(", ");
-    const rows = [
+    const catNames = categories.map(c => c.name);
+    const wsData = [
       ["Date", "Amount", "Description", "Category"],
-      ["", "", `Available categories: ${catNames}`, ""],
-      ["26/06/2026", "45.50", "Woolworths", "Food"],
-      ["25/06/2026", "120.00", "Shell Petrol", "Transport"],
+      ["26/06/2026", "45.50", "Woolworths", catNames[0] || ""],
+      ["25/06/2026", "120.00", "Shell Petrol", catNames[0] || ""],
     ];
-    const csv = rows.map(r => r.map(v => `"${v}"`).join(",")).join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = "budget_import_template.csv";
-    a.click();
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+    ws["!cols"] = [{ wch: 14 }, { wch: 12 }, { wch: 28 }, { wch: 18 }];
+
+    // Data validation dropdown for Category column (D2:D500)
+    const catListRef = `"${catNames.join(",")}"`;
+    ws["!dataValidation"] = [
+      {
+        sqref: "D2:D500",
+        type: "list",
+        formula1: catListRef,
+        showDropDown: false,
+        allowBlank: true,
+      }
+    ];
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Import");
+    XLSX.writeFile(wb, "budget_import_template.xlsx");
   };
 
   // ── Detect CSV format ──
@@ -220,11 +240,10 @@ export default function App() {
   const handleFileUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const rows = parseCSV(ev.target.result);
+    const isExcel = file.name.endsWith(".xlsx") || file.name.endsWith(".xls");
+
+    const processRows = (rows) => {
       if (!rows || rows.length === 0) { setImportStatus("Could not read file — check the format matches the template."); return; }
-      // find unmatched categories
       const unmatched = [...new Set(rows.map(r => r.categoryName).filter(n => !categories.find(c => c.name.toLowerCase() === n.toLowerCase())))];
       setImportRows(rows);
       if (unmatched.length > 0) {
@@ -234,7 +253,51 @@ export default function App() {
         commitImport(rows, {}, categories, expenses);
       }
     };
-    reader.readAsText(file);
+
+    if (isExcel) {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        try {
+          const wb = XLSX.read(ev.target.result, { type: "array" });
+          const ws = wb.Sheets[wb.SheetNames[0]];
+          const data = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false });
+          const headers = (data[0] || []).map(h => String(h || "").trim().toLowerCase());
+          const dateIdx = headers.indexOf("date");
+          const amountIdx = headers.indexOf("amount");
+          const descIdx = headers.indexOf("description");
+          const catIdx = headers.indexOf("category");
+          if (dateIdx === -1 || amountIdx === -1 || catIdx === -1) { setImportStatus("Could not read file — check the format matches the template."); return; }
+          const rows = [];
+          for (let i = 1; i < data.length; i++) {
+            const row = data[i];
+            if (!row || row.length === 0) continue;
+            const catName = String(row[catIdx] || "").trim();
+            if (!catName) continue;
+            let rawDate = String(row[dateIdx] || "").trim();
+            let date = rawDate;
+            if (rawDate.includes("/")) {
+              const [d, m, y] = rawDate.split("/");
+              date = `${y}-${m.padStart(2,"0")}-${d.padStart(2,"0")}`;
+            }
+            const amount = Math.abs(parseFloat(String(row[amountIdx] || "0").replace(/[^0-9.-]/g, "")));
+            if (isNaN(amount) || amount <= 0) continue;
+            const desc = String(row[descIdx] || "").trim();
+            rows.push({ date, amount, note: desc, categoryName: catName });
+          }
+          processRows(rows);
+        } catch (err) {
+          setImportStatus("Could not read file — check the format matches the template.");
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    } else {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const rows = parseCSV(ev.target.result);
+        processRows(rows);
+      };
+      reader.readAsText(file);
+    }
     e.target.value = "";
   };
 
@@ -446,19 +509,32 @@ export default function App() {
           <div style={card}>
             <h3 style={{margin:"0 0 16px",fontSize:16}}>Categories</h3>
             {categories.map(c => (
-              <div key={c.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 0",borderBottom:"1px solid #f3f4f6"}}>
-                <div style={{display:"flex",alignItems:"center",gap:10}}>
-                  <div style={{position:"relative",width:24,height:24}}>
-                    <div style={{width:24,height:24,borderRadius:"50%",background:c.color,cursor:"pointer",border:"2px solid #e5e7eb"}}/>
-                    <input type="color" value={c.color} onChange={e=>updateCategoryColor(c.id,e.target.value)}
-                      style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",opacity:0,cursor:"pointer"}}/>
+              <div key={c.id} style={{padding:"8px 0",borderBottom:"1px solid #f3f4f6"}}>
+                {editingCatId === c.id ? (
+                  <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+                    <div style={{position:"relative",width:24,height:24,flexShrink:0}}>
+                      <div style={{width:24,height:24,borderRadius:"50%",background:c.color,cursor:"pointer",border:"2px solid #e5e7eb"}}/>
+                      <input type="color" value={c.color} onChange={e=>updateCategoryColor(c.id,e.target.value)}
+                        style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",opacity:0,cursor:"pointer"}}/>
+                    </div>
+                    <input style={{...inp,flex:"1 1 100px",minWidth:90}} value={editCatForm.name} onChange={e=>setEditCatForm(f=>({...f,name:e.target.value}))}/>
+                    <input style={{...inp,flex:"0 0 90px",width:90}} type="number" value={editCatForm.budget} onChange={e=>setEditCatForm(f=>({...f,budget:e.target.value}))}/>
+                    <button style={{...btn("#10b981"),padding:"6px 12px",fontSize:13}} onClick={()=>{updateCategoryDetails(c.id,editCatForm.name,editCatForm.budget);setEditingCatId(null);}}>Save</button>
+                    <button style={{...btn("#f3f4f6","#374151"),padding:"6px 12px",fontSize:13}} onClick={()=>setEditingCatId(null)}>Cancel</button>
                   </div>
-                  <span style={{fontWeight:500}}>{c.name}</span>
-                </div>
-                <div style={{display:"flex",alignItems:"center",gap:8}}>
-                  <span style={{color:"#6b7280",fontSize:14}}>{fmt(c.budget)}/mo</span>
-                  <button onClick={()=>deleteCategory(c.id)} style={{...btn("#fee2e2","#ef4444"),padding:"3px 9px",fontSize:12}}>✕</button>
-                </div>
+                ) : (
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer"}} onClick={()=>{setEditingCatId(c.id);setEditCatForm({name:c.name,budget:c.budget});}}>
+                      <div style={{width:12,height:12,borderRadius:"50%",background:c.color}}/>
+                      <span style={{fontWeight:500}}>{c.name}</span>
+                    </div>
+                    <div style={{display:"flex",alignItems:"center",gap:8}}>
+                      <span style={{color:"#6b7280",fontSize:14}}>{fmt(c.budget)}/mo</span>
+                      <button onClick={()=>{setEditingCatId(c.id);setEditCatForm({name:c.name,budget:c.budget});}} style={{...btn("#f3f4f6","#374151"),padding:"3px 9px",fontSize:12}}>✎</button>
+                      <button onClick={()=>deleteCategory(c.id)} style={{...btn("#fee2e2","#ef4444"),padding:"3px 9px",fontSize:12}}>✕</button>
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
             <div style={{display:"flex",gap:8,marginTop:16,flexWrap:"wrap"}}>
@@ -472,14 +548,14 @@ export default function App() {
 
           {/* Import / Export */}
           <div style={card}>
-            <h3 style={{margin:"0 0 8px",fontSize:16}}>Import from CSV</h3>
+            <h3 style={{margin:"0 0 8px",fontSize:16}}>Import from Excel</h3>
             <p style={{fontSize:13,color:"#6b7280",margin:"0 0 14px"}}>
-              Download the template, fill it in Excel, then upload it here.
+              Download the template (has a Category dropdown built in), fill it in, then upload it here.
             </p>
             <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
               <button style={btn("#f3f4f6","#374151")} onClick={downloadTemplate}>⬇ Download Template</button>
-              <button style={btn()} onClick={()=>fileRef.current.click()}>⬆ Upload CSV</button>
-              <input ref={fileRef} type="file" accept=".csv" style={{display:"none"}} onChange={handleFileUpload}/>
+              <button style={btn()} onClick={()=>fileRef.current.click()}>⬆ Upload File</button>
+              <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" style={{display:"none"}} onChange={handleFileUpload}/>
             </div>
             {importStatus && <div style={{marginTop:12,fontSize:14,color:importStatus.startsWith("✓")?"#10b981":"#ef4444",fontWeight:600}}>{importStatus}</div>}
           </div>
