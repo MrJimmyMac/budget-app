@@ -3,7 +3,6 @@ import { initializeApp } from "firebase/app";
 import { getFirestore, doc, setDoc, getDoc } from "firebase/firestore";
 import * as XLSX from "xlsx";
 
-// ── Firebase config ───────────────────────────────────────────────────────────
 const firebaseConfig = {
   apiKey: "AIzaSyA9xfuQHTlxrhe9fBIqaSeBMBxKMuDFa7w",
   authDomain: "budget-app-a291b.firebaseapp.com",
@@ -14,7 +13,6 @@ const firebaseConfig = {
 };
 const firebaseApp = initializeApp(firebaseConfig);
 const db = getFirestore(firebaseApp);
-// ─────────────────────────────────────────────────────────────────────────────
 
 const PASSWORD = "MYPASSWORD";
 
@@ -56,6 +54,7 @@ export default function App() {
   const [importStatus, setImportStatus] = useState("");
   const [editingCatId, setEditingCatId] = useState(null);
   const [editCatForm, setEditCatForm] = useState({ name: "", budget: "" });
+  const fileRef = useRef();
 
   useEffect(() => {
     if (!authed) return;
@@ -152,8 +151,6 @@ export default function App() {
     ];
     const ws = XLSX.utils.aoa_to_sheet(wsData);
     ws["!cols"] = [{ wch: 14 }, { wch: 12 }, { wch: 28 }, { wch: 18 }];
-
-    // Data validation dropdown for Category column (D2:D500)
     const catListRef = `"${catNames.join(",")}"`;
     ws["!dataValidation"] = [
       {
@@ -164,7 +161,6 @@ export default function App() {
         allowBlank: true,
       }
     ];
-
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Import");
     XLSX.writeFile(wb, "budget_import_template.xlsx");
@@ -172,10 +168,8 @@ export default function App() {
 
   // ── Detect CSV format ──
   const detectFormat = (headers) => {
-    // CommBank: Date, Amount, Description, Balance (no Category column)
     if (headers.includes("date") && headers.includes("amount") && headers.includes("description") && headers.includes("balance") && !headers.includes("category"))
       return "commbank";
-    // Template format
     if (headers.includes("date") && headers.includes("amount") && headers.includes("category"))
       return "template";
     return "unknown";
@@ -187,12 +181,10 @@ export default function App() {
     const headers = lines[0].split(",").map(h => h.replace(/"/g, "").trim().toLowerCase());
     const format = detectFormat(headers);
     if (format === "unknown") return null;
-
     const dateIdx = headers.indexOf("date");
     const amountIdx = headers.indexOf("amount");
     const descIdx = headers.indexOf("description");
     const catIdx = headers.indexOf("category");
-
     const parseDate = (raw) => {
       if (!raw) return "";
       if (raw.includes("/")) {
@@ -201,12 +193,7 @@ export default function App() {
       }
       return raw;
     };
-
-    const cleanDesc = (desc) => {
-      // Strip trailing numbers/codes from CommBank descriptions e.g. "WOOLWORTHS 1234 SYDNEY"
-      return desc.replace(/\s+\d{4,}\s*/g, " ").trim();
-    };
-
+    const cleanDesc = (desc) => desc.replace(/\s+\d{4,}\s*/g, " ").trim();
     const rows = [];
     for (let i = 1; i < lines.length; i++) {
       const cols = lines[i].match(/(".*?"|[^,]+)(?=,|$)/g) || [];
@@ -214,20 +201,15 @@ export default function App() {
       const rawDate = clean[dateIdx] || "";
       const date = parseDate(rawDate);
       const rawAmount = clean[amountIdx] || "0";
-      // CommBank uses negative for debits — take absolute value
       const amount = Math.abs(parseFloat(rawAmount.replace(/[^0-9.-]/g, "")));
       const desc = cleanDesc(clean[descIdx] || "");
-
       if (format === "commbank") {
-        // CommBank format — category comes from added column or defaults to unmatched
         const catName = catIdx !== -1 ? (clean[catIdx] || "") : "";
-        if (!catName) continue; // skip rows without category
+        if (!catName) continue;
         if (isNaN(amount) || amount <= 0) continue;
-        // skip credits (positive in CommBank = money in)
         if (parseFloat(rawAmount) > 0) continue;
         rows.push({ date, amount, note: desc, categoryName: catName });
       } else {
-        // Template format
         const catName = clean[catIdx] || "";
         if (!catName || catName.startsWith("Available")) continue;
         if (isNaN(amount) || amount <= 0) continue;
@@ -241,7 +223,6 @@ export default function App() {
     const file = e.target.files[0];
     if (!file) return;
     const isExcel = file.name.endsWith(".xlsx") || file.name.endsWith(".xls");
-
     const processRows = (rows) => {
       if (!rows || rows.length === 0) { setImportStatus("Could not read file — check the format matches the template."); return; }
       const unmatched = [...new Set(rows.map(r => r.categoryName).filter(n => !categories.find(c => c.name.toLowerCase() === n.toLowerCase())))];
@@ -253,7 +234,6 @@ export default function App() {
         commitImport(rows, {}, categories, expenses);
       }
     };
-
     if (isExcel) {
       const reader = new FileReader();
       reader.onload = (ev) => {
@@ -305,17 +285,13 @@ export default function App() {
     const resolved = { ...currentUnmatched, action, mapTo };
     const remaining = unmatchedQueue.slice(1);
     const resolutionMap = { [resolved.name]: resolved };
-
     if (remaining.length > 0) {
       setUnmatchedQueue(remaining);
       setCurrentUnmatched({ name: remaining[0], action: null, mapTo: "" });
-      // store resolutions to apply later
       setCurrentUnmatched(prev => ({ ...prev, _resolutions: { ...(prev?._resolutions || {}), ...resolutionMap } }));
     } else {
-      // all resolved — commit
       const allResolutions = { ...(currentUnmatched?._resolutions || {}), ...resolutionMap };
       let updatedCats = [...categories];
-      // create new categories where needed
       Object.values(allResolutions).forEach(r => {
         if (r.action === "create") {
           updatedCats = [...updatedCats, { id: Date.now() + Math.random(), name: r.name, budget: 200, color: COLORS[updatedCats.length % COLORS.length] }];
@@ -341,7 +317,6 @@ export default function App() {
       }
       const cat = cats.find(c => c.name.toLowerCase() === catName.toLowerCase());
       if (!cat) return;
-      // derive month key from date
       const d = new Date(row.date);
       const mk = monthKey(d.getFullYear(), d.getMonth());
       if (!newExps[mk]) newExps[mk] = [];
@@ -405,7 +380,7 @@ export default function App() {
   if (!loaded) return <div style={{...base,display:"flex",alignItems:"center",justifyContent:"center",color:"#6b7280"}}>Loading...</div>;
 
   // ── Unmatched category dialog ──
-  if (currentUnmatched && !currentUnmatched._resolutions && unmatchedQueue.length > 0 || currentUnmatched?.action === null) {
+  if (currentUnmatched?.action === null) {
     return (
       <div style={{...base,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
         <div style={{...card,maxWidth:420,width:"100%"}}>
