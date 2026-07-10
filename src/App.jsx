@@ -375,7 +375,7 @@ export default function App() {
   };
 
   const DonutChart = () => {
-    const r = 60, cx = 80, cy = 80, circ = 2 * Math.PI * r;
+    const r = 80, cx = 107, cy = 107, circ = 2 * Math.PI * r;
     let offset = 0;
     const slices = totalSpent > 0 ? categories.map(c => {
       const pct = spentByCategory[c.id] / totalSpent;
@@ -385,17 +385,17 @@ export default function App() {
       return s;
     }) : [];
     return (
-      <svg width="160" height="160" viewBox="0 0 160 160">
-        {totalSpent === 0 ? <circle cx={cx} cy={cy} r={r} fill="none" stroke="#e5e7eb" strokeWidth="20"/>
+      <svg width="214" height="214" viewBox="0 0 214 214">
+        {totalSpent === 0 ? <circle cx={cx} cy={cy} r={r} fill="none" stroke="#e5e7eb" strokeWidth="26"/>
         : slices.map((s,i) => (
-          <circle key={i} cx={cx} cy={cy} r={r} fill="none" stroke={s.color} strokeWidth="20"
+          <circle key={i} cx={cx} cy={cy} r={r} fill="none" stroke={s.color} strokeWidth="26"
             strokeDasharray={`${s.dash} ${circ-s.dash}`}
             strokeDashoffset={-s.offset+circ*0.25}
             style={{transform:"rotate(-90deg)",transformOrigin:`${cx}px ${cy}px`}}
           />
         ))}
-        <text x={cx} y={cy-8} textAnchor="middle" fontSize="11" fill="#6b7280">Spent</text>
-        <text x={cx} y={cy+10} textAnchor="middle" fontSize="14" fontWeight="700" fill="#111827">{fmt(totalSpent)}</text>
+        <text x={cx} y={cy-10} textAnchor="middle" fontSize="13" fill="#6b7280">Spent</text>
+        <text x={cx} y={cy+12} textAnchor="middle" fontSize="17" fontWeight="700" fill="#111827">{fmt(totalSpent)}</text>
       </svg>
     );
   };
