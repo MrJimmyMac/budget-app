@@ -253,12 +253,39 @@ export default function App() {
             if (!row || row.length === 0) continue;
             const catName = String(row[catIdx] || "").trim();
             if (!catName) continue;
+
+            // Parse date — handles dd/mm/yyyy, yyyy-mm-dd, yy-dd-mm, and Excel serial numbers
             let rawDate = String(row[dateIdx] || "").trim();
-            let date = rawDate;
-            if (rawDate.includes("/")) {
-              const [d, m, y] = rawDate.split("/");
-              date = `${y}-${m.padStart(2,"0")}-${d.padStart(2,"0")}`;
+            let date = "";
+            if (!isNaN(rawDate) && rawDate.length > 3) {
+              // Excel serial number — convert to date
+              const excelDate = XLSX.SSF.parse_date_code(Number(rawDate));
+              if (excelDate) {
+                date = `${excelDate.y}-${String(excelDate.m).padStart(2,"0")}-${String(excelDate.d).padStart(2,"0")}`;
+              }
+            } else if (rawDate.includes("/")) {
+              // dd/mm/yyyy
+              const parts = rawDate.split("/");
+              if (parts.length === 3) {
+                const [d, m, y] = parts;
+                const fullYear = y.length === 2 ? `20${y}` : y;
+                date = `${fullYear}-${m.padStart(2,"0")}-${d.padStart(2,"0")}`;
+              }
+            } else if (rawDate.includes("-")) {
+              const parts = rawDate.split("-");
+              if (parts.length === 3) {
+                const [a, b, c] = parts;
+                if (a.length === 4) {
+                  // yyyy-mm-dd
+                  date = `${a}-${b.padStart(2,"0")}-${c.padStart(2,"0")}`;
+                } else if (a.length === 2 && Number(b) <= 31 && Number(c) <= 12) {
+                  // yy-dd-mm (CommBank via Excel)
+                  const fullYear = `20${a}`;
+                  date = `${fullYear}-${c.padStart(2,"0")}-${b.padStart(2,"0")}`;
+                }
+              }
             }
+            if (!date) continue;
             const amount = Math.abs(parseFloat(String(row[amountIdx] || "0").replace(/[^0-9.-]/g, "")));
             if (isNaN(amount) || amount <= 0) continue;
             const desc = String(row[descIdx] || "").trim();
