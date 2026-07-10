@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { initializeApp } from "firebase/app";
 import { getFirestore, doc, setDoc, getDoc } from "firebase/firestore";
-import * as XLSX from "xlsx";
+import ExcelJS from "exceljs";
 
 const firebaseConfig = {
   apiKey: "AIzaSyA9xfuQHTlxrhe9fBIqaSeBMBxKMuDFa7w",
@@ -252,63 +252,57 @@ export default function App() {
     };
     if (isExcel) {
       const reader = new FileReader();
-      reader.onload = (ev) => {
+      reader.onload = async (ev) => {
         try {
-          const wb = XLSX.read(ev.target.result, { type: "array" });
-          const ws = wb.Sheets[wb.SheetNames[0]];
-          const data = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false });
-          const headers = (data[0] || []).map(h => String(h || "").trim().toLowerCase());
-          const dateIdx = headers.indexOf("date");
-          const amountIdx = headers.indexOf("amount");
-          const descIdx = headers.indexOf("description");
-          const catIdx = headers.indexOf("category");
-          if (dateIdx === -1 || amountIdx === -1 || catIdx === -1) { setImportStatus("Could not read file — check the format matches the template."); return; }
+          const wb = new ExcelJS.Workbook();
+          await wb.xlsx.load(ev.target.result);
+          const ws = wb.getWorksheet("Import") || wb.worksheets[0];
           const rows = [];
-          for (let i = 1; i < data.length; i++) {
-            const row = data[i];
-            if (!row || row.length === 0) continue;
-            const catName = String(row[catIdx] || "").trim();
-            if (!catName) continue;
-
-            // Parse date — handles dd/mm/yyyy, yyyy-mm-dd, yy-dd-mm, and Excel serial numbers
-            let rawDate = String(row[dateIdx] || "").trim();
+          const headers = [];
+          ws.eachRow((row, rowNum) => {
+            if (rowNum === 1) {
+              row.eachCell((cell, colNum) => {
+                headers[colNum] = String(cell.value || "").trim().toLowerCase();
+              });
+              return;
+            }
+            const dateIdx = headers.indexOf("date") + 1;
+            const amountIdx = headers.indexOf("amount") + 1;
+            const descIdx = headers.indexOf("description") + 1;
+            const catIdx = headers.indexOf("category") + 1;
+            if (!dateIdx || !amountIdx || !catIdx) return;
+            const catName = String(row.getCell(catIdx).value || "").trim();
+            if (!catName) return;
+            let rawDate = row.getCell(dateIdx).value;
             let date = "";
-            if (!isNaN(rawDate) && rawDate.length > 3) {
-              // Excel serial number — convert to date
-              const excelDate = XLSX.SSF.parse_date_code(Number(rawDate));
-              if (excelDate) {
-                date = `${excelDate.y}-${String(excelDate.m).padStart(2,"0")}-${String(excelDate.d).padStart(2,"0")}`;
-              }
-            } else if (rawDate.includes("/")) {
-              // dd/mm/yyyy
-              const parts = rawDate.split("/");
-              if (parts.length === 3) {
-                const [d, m, y] = parts;
+            if (rawDate instanceof Date) {
+              date = `${rawDate.getFullYear()}-${String(rawDate.getMonth()+1).padStart(2,"0")}-${String(rawDate.getDate()).padStart(2,"0")}`;
+            } else {
+              rawDate = String(rawDate || "").trim();
+              if (rawDate.includes("/")) {
+                const [d, m, y] = rawDate.split("/");
                 const fullYear = y.length === 2 ? `20${y}` : y;
                 date = `${fullYear}-${m.padStart(2,"0")}-${d.padStart(2,"0")}`;
-              }
-            } else if (rawDate.includes("-")) {
-              const parts = rawDate.split("-");
-              if (parts.length === 3) {
-                const [a, b, c] = parts;
-                if (a.length === 4) {
-                  // yyyy-mm-dd
-                  date = `${a}-${b.padStart(2,"0")}-${c.padStart(2,"0")}`;
-                } else if (a.length === 2 && Number(b) <= 31 && Number(c) <= 12) {
-                  // yy-dd-mm (CommBank via Excel)
-                  const fullYear = `20${a}`;
-                  date = `${fullYear}-${c.padStart(2,"0")}-${b.padStart(2,"0")}`;
+              } else if (rawDate.includes("-")) {
+                const parts = rawDate.split("-");
+                if (parts[0].length === 4) {
+                  date = rawDate;
+                } else {
+                  const [a, b, c] = parts;
+                  date = `20${a}-${c.padStart(2,"0")}-${b.padStart(2,"0")}`;
                 }
               }
             }
-            if (!date) continue;
-            const amount = Math.abs(parseFloat(String(row[amountIdx] || "0").replace(/[^0-9.-]/g, "")));
-            if (isNaN(amount) || amount <= 0) continue;
-            const desc = String(row[descIdx] || "").trim();
+            if (!date) return;
+            const rawAmount = row.getCell(amountIdx).value;
+            const amount = Math.abs(parseFloat(String(rawAmount || "0").replace(/[^0-9.-]/g, "")));
+            if (isNaN(amount) || amount <= 0) return;
+            const desc = String(row.getCell(descIdx).value || "").trim();
             rows.push({ date, amount, note: desc, categoryName: catName });
-          }
+          });
           processRows(rows);
         } catch (err) {
+          console.error(err);
           setImportStatus("Could not read file — check the format matches the template.");
         }
       };
