@@ -146,25 +146,39 @@ export default function App() {
   // ── Download template (Excel with dropdown) ──
   const downloadTemplate = () => {
     const catNames = categories.map(c => c.name);
+
+    // Main import sheet
     const wsData = [
       ["Date", "Amount", "Description", "Category"],
-      ["26/06/2026", "45.50", "Woolworths", catNames[0] || ""],
-      ["25/06/2026", "120.00", "Shell Petrol", catNames[0] || ""],
+      ["30/06/2026", "45.50", "Woolworths", catNames[0] || ""],
+      ["29/06/2026", "120.00", "Shell Petrol", catNames[0] || ""],
     ];
     const ws = XLSX.utils.aoa_to_sheet(wsData);
     ws["!cols"] = [{ wch: 14 }, { wch: 12 }, { wch: 28 }, { wch: 18 }];
-    const catListRef = `"${catNames.join(",")}"`;
-    ws["!dataValidation"] = [
-      {
-        sqref: "D2:D500",
-        type: "list",
-        formula1: catListRef,
-        showDropDown: false,
-        allowBlank: true,
-      }
-    ];
+
+    // Categories reference sheet
+    const wsCats = XLSX.utils.aoa_to_sheet([
+      ["Categories"],
+      ...catNames.map(n => [n])
+    ]);
+    wsCats["!cols"] = [{ wch: 20 }];
+
+    // Add data validation referencing the Categories sheet
+    const numCats = catNames.length;
+    ws["!dataValidation"] = [{
+      sqref: "D2:D1000",
+      type: "list",
+      formula1: `Categories!$A$2:$A${numCats + 1}`,
+      showDropDown: false,
+      allowBlank: true,
+      showErrorMessage: true,
+      errorTitle: "Invalid Category",
+      error: `Please select a category from the list: ${catNames.join(", ")}`
+    }];
+
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Import");
+    XLSX.utils.book_append_sheet(wb, wsCats, "Categories");
     XLSX.writeFile(wb, "budget_import_template.xlsx");
   };
 
