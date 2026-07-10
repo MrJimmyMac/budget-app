@@ -52,6 +52,8 @@ export default function App() {
   const [unmatchedQueue, setUnmatchedQueue] = useState([]);
   const [currentUnmatched, setCurrentUnmatched] = useState(null);
   const [importStatus, setImportStatus] = useState("");
+  const [replaceOnImport, setReplaceOnImport] = useState(false);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [editingCatId, setEditingCatId] = useState(null);
   const [editCatForm, setEditCatForm] = useState({ name: "", budget: "" });
   const fileRef = useRef();
@@ -333,6 +335,14 @@ export default function App() {
 
   const commitImport = (rows, resolutions, cats, exps) => {
     const newExps = { ...exps };
+    // if replace mode, clear existing expenses for affected months first
+    if (replaceOnImport) {
+      const affectedMonths = [...new Set(rows.map(row => {
+        const d = new Date(row.date);
+        return monthKey(d.getFullYear(), d.getMonth());
+      }))];
+      affectedMonths.forEach(mk => { newExps[mk] = []; });
+    }
     let added = 0;
     rows.forEach(row => {
       let catName = row.categoryName;
@@ -354,6 +364,14 @@ export default function App() {
     save(cats, newExps, income);
     setImportStatus(`✓ ${added} transaction${added !== 1 ? "s" : ""} imported successfully!`);
     setTimeout(() => setImportStatus(""), 4000);
+  };
+
+  const clearMonth = () => {
+    const updated = { ...expenses };
+    delete updated[mk];
+    setExpenses(updated);
+    save(categories, updated, income);
+    setShowClearConfirm(false);
   };
 
   const DonutChart = () => {
@@ -554,6 +572,12 @@ export default function App() {
             <p style={{fontSize:13,color:"#6b7280",margin:"0 0 14px"}}>
               Download the template (has a Category dropdown built in), fill it in, then upload it here.
             </p>
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14,cursor:"pointer"}} onClick={()=>setReplaceOnImport(r=>!r)}>
+              <div style={{width:20,height:20,borderRadius:4,border:"2px solid #6366f1",background:replaceOnImport?"#6366f1":"#fff",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                {replaceOnImport && <span style={{color:"#fff",fontSize:14,lineHeight:1}}>✓</span>}
+              </div>
+              <span style={{fontSize:14,color:"#374151"}}>Replace existing expenses for imported months</span>
+            </div>
             <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
               <button style={btn("#f3f4f6","#374151")} onClick={downloadTemplate}>⬇ Download Template</button>
               <button style={btn()} onClick={()=>fileRef.current.click()}>⬆ Upload File</button>
@@ -583,6 +607,23 @@ export default function App() {
           <span style={{fontWeight:700,fontSize:17}}>{MONTHS[month]} {year}</span>
           <button onClick={nextMonth} style={{...btn("#f3f4f6","#374151"),padding:"6px 12px"}}>›</button>
         </div>
+
+        {/* Clear month */}
+        {showClearConfirm ? (
+          <div style={{...card,background:"#fff5f5",border:"1.5px solid #fee2e2"}}>
+            <p style={{margin:"0 0 12px",fontSize:14,color:"#374151"}}>Are you sure you want to clear all expenses for <strong>{MONTHS[month]} {year}</strong>? This cannot be undone.</p>
+            <div style={{display:"flex",gap:8}}>
+              <button style={{...btn("#ef4444"),padding:"8px 16px"}} onClick={clearMonth}>Yes, clear month</button>
+              <button style={{...btn("#f3f4f6","#374151")}} onClick={()=>setShowClearConfirm(false)}>Cancel</button>
+            </div>
+          </div>
+        ) : (
+          monthExpenses.length > 0 && (
+            <div style={{textAlign:"right",marginBottom:8}}>
+              <button style={{...btn("#fee2e2","#ef4444"),fontSize:13,padding:"6px 12px"}} onClick={()=>setShowClearConfirm(true)}>🗑 Clear {MONTHS[month]}</button>
+            </div>
+          )
+        )}
 
         <div style={{...card,display:"flex",alignItems:"center",gap:24,flexWrap:"wrap"}}>
           <DonutChart/>
