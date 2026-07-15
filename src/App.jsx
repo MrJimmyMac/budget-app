@@ -44,8 +44,9 @@ export default function App() {
   const [activeCategory, setActiveCategory] = useState(null);
   const [form, setForm] = useState({ amount: "", categoryId: "", note: "", date: new Date().toISOString().split("T")[0] });
   const [newCat, setNewCat] = useState({ name: "", budget: "", color: COLORS[0] });
-  const [editIncome, setEditIncome] = useState(false);
-  const [incomeInput, setIncomeInput] = useState(5000);
+  const [incomeByMonth, setIncomeByMonth] = useState({});
+  const [editingIncome, setEditingIncome] = useState(false);
+  const [monthIncomeInput, setMonthIncomeInput] = useState("");
   const [loaded, setLoaded] = useState(false);
   const [saveStatus, setSaveStatus] = useState("");
   const [importRows, setImportRows] = useState([]);
@@ -69,7 +70,7 @@ export default function App() {
           const d = snap.data();
           if (d.categories) setCategories(d.categories);
           if (d.expenses) setExpenses(d.expenses);
-          if (d.income) { setIncome(d.income); setIncomeInput(d.income); }
+          if (d.incomeByMonth) setIncomeByMonth(d.incomeByMonth);
           if (d.recurringBills) setRecurringBills(d.recurringBills);
         }
       } catch(e) { console.error(e); }
@@ -77,9 +78,9 @@ export default function App() {
     })();
   }, [authed]);
 
-  const save = useCallback(async (cats, exps, inc, bills) => {
+  const save = useCallback(async (cats, exps, ibm, bills) => {
     try {
-      await setDoc(doc(db, "budget", "data"), { categories: cats, expenses: exps, income: inc, recurringBills: bills });
+      await setDoc(doc(db, "budget", "data"), { categories: cats, expenses: exps, incomeByMonth: ibm, recurringBills: bills });
       setSaveStatus("Saved ✓");
       setTimeout(() => setSaveStatus(""), 2000);
     } catch(e) { setSaveStatus("Save failed"); }
@@ -87,13 +88,24 @@ export default function App() {
 
   const mk = monthKey(year, month);
   const monthExpenses = expenses[mk] || [];
+  const currentIncome = incomeByMonth[mk] || 0;
   const spentByCategory = categories.reduce((acc, c) => {
     acc[c.id] = monthExpenses.filter(e => e.categoryId === c.id).reduce((s, e) => s + Number(e.amount), 0);
     return acc;
   }, {});
   const totalBudget = categories.reduce((s, c) => s + Number(c.budget), 0);
   const totalSpent = Object.values(spentByCategory).reduce((s, v) => s + v, 0);
-  const totalRemaining = income - totalSpent;
+  const totalRemaining = currentIncome - totalSpent;
+
+  const saveMonthIncome = () => {
+    const v = Number(monthIncomeInput);
+    if (!isNaN(v) && v >= 0) {
+      const updated = { ...incomeByMonth, [mk]: v };
+      setIncomeByMonth(updated);
+      setEditingIncome(false);
+      save(categories, expenses, updated, recurringBills);
+    }
+  };
 
   // ── Detect recurring bill suggestions ──
   useEffect(() => {
@@ -157,13 +169,13 @@ export default function App() {
     const updated = { ...expenses, [mk]: [...monthExpenses, newExp] };
     setExpenses(updated);
     setForm(f => ({ ...f, amount: "", note: "" }));
-    save(categories, updated, income, recurringBills);
+    save(categories, updated, incomeByMonth, recurringBills);
   };
 
   const deleteExpense = (id) => {
     const updated = { ...expenses, [mk]: monthExpenses.filter(e => e.id !== id) };
     setExpenses(updated);
-    save(categories, updated, income, recurringBills);
+    save(categories, updated, incomeByMonth, recurringBills);
   };
 
   const addCategory = () => {
@@ -172,27 +184,29 @@ export default function App() {
     const updated = [...categories, c];
     setCategories(updated);
     setNewCat({ name: "", budget: "", color: COLORS[updated.length % COLORS.length] });
-    save(updated, expenses, income, recurringBills);
+    save(updated, expenses, incomeByMonth, recurringBills);
   };
 
   const deleteCategory = (id) => {
     const updated = categories.filter(c => c.id !== id);
     setCategories(updated);
-    save(updated, expenses, income, recurringBills);
+    save(updated, expenses, incomeByMonth, recurringBills);
   };
 
   const updateCategoryColor = (id, color) => {
     const updated = categories.map(c => c.id === id ? { ...c, color } : c);
     setCategories(updated);
-    save(updated, expenses, income, recurringBills);
+    save(updated, expenses, incomeByMonth, recurringBills);
   };
 
   const updateCategoryDetails = (id, name, budget) => {
     if (!name || !budget || isNaN(Number(budget))) return;
     const updated = categories.map(c => c.id === id ? { ...c, name, budget: Number(budget) } : c);
     setCategories(updated);
-    save(updated, expenses, income, recurringBills);
+    save(updated, expenses, incomeByMonth, recurringBills);
   };
+
+
 
   const saveIncome = () => {
     const v = Number(incomeInput);
@@ -580,21 +594,6 @@ export default function App() {
       <div style={{maxWidth:600,margin:"0 auto",padding:"20px 16px"}}>
         <button onClick={()=>setView("dashboard")} style={{...btn("#f3f4f6","#374151"),marginBottom:16}}>← Back</button>
         <div style={card}>
-          <h3 style={{margin:"0 0 16px",fontSize:16}}>Monthly Income</h3>
-          {editIncome?(
-            <div style={{display:"flex",gap:8}}>
-              <input style={{...inp,width:160}} type="number" value={incomeInput} onChange={e=>setIncomeInput(e.target.value)}/>
-              <button style={btn()} onClick={saveIncome}>Save</button>
-              <button style={btn("#f3f4f6","#374151")} onClick={()=>setEditIncome(false)}>Cancel</button>
-            </div>
-          ):(
-            <div style={{display:"flex",alignItems:"center",gap:12}}>
-              <span style={{fontSize:18,fontWeight:700}}>{fmt(income)}</span>
-              <button style={btn("#f3f4f6","#374151")} onClick={()=>setEditIncome(true)}>Edit</button>
-            </div>
-          )}
-        </div>
-        <div style={card}>
           <h3 style={{margin:"0 0 16px",fontSize:16}}>Categories</h3>
           {categories.map(c=>(
             <div key={c.id} style={{padding:"8px 0",borderBottom:"1px solid #f3f4f6"}}>
@@ -694,8 +693,19 @@ export default function App() {
           <DonutChart/>
           <div style={{flex:1,minWidth:160}}>
             <div style={{marginBottom:12}}>
-              <div style={{fontSize:12,color:"#9ca3af",fontWeight:600,textTransform:"uppercase",letterSpacing:.5}}>Income</div>
-              <div style={{fontSize:22,fontWeight:800}}>{fmt(income)}</div>
+              <div style={{fontSize:12,color:"#9ca3af",fontWeight:600,textTransform:"uppercase",letterSpacing:.5}}>Income — {MONTHS[month]}</div>
+              {editingIncome ? (
+                <div style={{display:"flex",gap:8,alignItems:"center",marginTop:4}}>
+                  <input style={{...inp,width:130}} type="number" placeholder="Enter income" value={monthIncomeInput} onChange={e=>setMonthIncomeInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&saveMonthIncome()}/>
+                  <button style={{...btn("#10b981"),padding:"6px 12px",fontSize:13}} onClick={saveMonthIncome}>Save</button>
+                  <button style={{...btn("#f3f4f6","#374151"),padding:"6px 12px",fontSize:13}} onClick={()=>setEditingIncome(false)}>✕</button>
+                </div>
+              ) : (
+                <div style={{display:"flex",alignItems:"center",gap:10,marginTop:4}}>
+                  <span style={{fontSize:22,fontWeight:800}}>{currentIncome>0?fmt(currentIncome):"Not set"}</span>
+                  <button style={{...btn("#f3f4f6","#374151"),padding:"3px 9px",fontSize:12}} onClick={()=>{setMonthIncomeInput(currentIncome||"");setEditingIncome(true);}}>✎</button>
+                </div>
+              )}
             </div>
             <div style={{display:"flex",gap:20,flexWrap:"wrap"}}>
               <div>
