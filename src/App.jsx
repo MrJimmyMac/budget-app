@@ -206,7 +206,7 @@ export default function App() {
     save(updated, expenses, incomeByMonth, recurringBills);
   };
 
-  const saveIncome = () => {}; // kept for settings compatibility
+
 
   const saveIncome = () => {
     const v = Number(incomeInput);
