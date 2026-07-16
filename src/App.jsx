@@ -40,7 +40,7 @@ export default function App() {
   const [expenses, setExpenses] = useState({});
   const [income, setIncome] = useState(5000);
   const [recurringBills, setRecurringBills] = useState([]);
-  const [view, setView] = useState("dashboard");
+  const [view, setView] = useState("dashboard"); // dashboard | category | settings | bills | insights
   const [activeCategory, setActiveCategory] = useState(null);
   const [form, setForm] = useState({ amount: "", categoryId: "", note: "", date: new Date().toISOString().split("T")[0] });
   const [newCat, setNewCat] = useState({ name: "", budget: "", color: COLORS[0] });
@@ -650,6 +650,159 @@ export default function App() {
     </div>
   );
 
+  // ── Insights view ──
+  if (view === "insights") {
+    // Last 6 months data
+    const last6 = Array.from({length:6},(_,i) => {
+      const d = new Date(year, month - (5-i), 1);
+      const y = d.getFullYear(), m = d.getMonth();
+      const mk = monthKey(y, m);
+      const exps = expenses[mk] || [];
+      const spent = exps.reduce((s,e) => s+Number(e.amount), 0);
+      const inc = incomeByMonth[mk] || 0;
+      return { label: MONTHS[m].slice(0,3), mk, spent, income: inc, saved: inc - spent };
+    });
+
+    // Current month stats
+    const prevMk = monthKey(month===0?year-1:year, month===0?11:month-1);
+    const prevExps = expenses[prevMk] || [];
+    const prevSpent = prevExps.reduce((s,e) => s+Number(e.amount), 0);
+    const spentDiff = totalSpent - prevSpent;
+    const savedAmount = currentIncome - totalSpent;
+    const savingsRate = currentIncome > 0 ? Math.round((savedAmount/currentIncome)*100) : 0;
+    const biggestCat = categories.reduce((a,c) => (spentByCategory[c.id]||0) > (spentByCategory[a?.id]||0) ? c : a, categories[0]);
+    const mostExpensive = monthExpenses.reduce((a,e) => Number(e.amount) > Number(a?.amount||0) ? e : a, null);
+    const overBudget = categories.filter(c => (spentByCategory[c.id]||0) > c.budget);
+    const underBudget = categories.filter(c => (spentByCategory[c.id]||0) <= c.budget);
+
+    // Bar chart
+    const maxSpent = Math.max(...last6.map(m => m.spent), 1);
+    const barW = 100/6;
+
+    return (
+      <div style={base}>
+        <div style={{maxWidth:640,margin:"0 auto",padding:"20px 16px"}}>
+          <button onClick={()=>setView("dashboard")} style={{...btn("#f3f4f6","#374151"),marginBottom:16}}>← Back</button>
+          <h2 style={{margin:"0 0 16px",fontSize:20,fontWeight:800}}>📊 Insights — {MONTHS[month]} {year}</h2>
+
+          {/* Financial summary */}
+          <div style={card}>
+            <h3 style={{margin:"0 0 16px",fontSize:16}}>Financial Summary</h3>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+              <div style={{background:"#f9fafb",borderRadius:10,padding:14}}>
+                <div style={{fontSize:12,color:"#9ca3af",fontWeight:600,textTransform:"uppercase"}}>Income</div>
+                <div style={{fontSize:20,fontWeight:800,marginTop:4}}>{currentIncome>0?fmt(currentIncome):"Not set"}</div>
+              </div>
+              <div style={{background:"#f9fafb",borderRadius:10,padding:14}}>
+                <div style={{fontSize:12,color:"#9ca3af",fontWeight:600,textTransform:"uppercase"}}>Total Spent</div>
+                <div style={{fontSize:20,fontWeight:800,color:"#ef4444",marginTop:4}}>{fmt(totalSpent)}</div>
+              </div>
+              <div style={{background:"#f9fafb",borderRadius:10,padding:14}}>
+                <div style={{fontSize:12,color:"#9ca3af",fontWeight:600,textTransform:"uppercase"}}>Saved</div>
+                <div style={{fontSize:20,fontWeight:800,color:savedAmount>=0?"#10b981":"#ef4444",marginTop:4}}>{fmt(savedAmount)}</div>
+              </div>
+              <div style={{background:"#f9fafb",borderRadius:10,padding:14}}>
+                <div style={{fontSize:12,color:"#9ca3af",fontWeight:600,textTransform:"uppercase"}}>Savings Rate</div>
+                <div style={{fontSize:20,fontWeight:800,color:savingsRate>=20?"#10b981":savingsRate>=10?"#f59e0b":"#ef4444",marginTop:4}}>{currentIncome>0?`${savingsRate}%`:"—"}</div>
+              </div>
+            </div>
+          </div>
+
+          {/* vs last month */}
+          <div style={card}>
+            <h3 style={{margin:"0 0 14px",fontSize:16}}>vs Last Month</h3>
+            <div style={{display:"flex",alignItems:"center",gap:12}}>
+              <div style={{fontSize:32}}>{spentDiff>0?"📈":"📉"}</div>
+              <div>
+                <div style={{fontSize:18,fontWeight:800,color:spentDiff>0?"#ef4444":"#10b981"}}>
+                  {spentDiff>0?"+":""}{fmt(spentDiff)}
+                </div>
+                <div style={{fontSize:13,color:"#6b7280"}}>
+                  {spentDiff>0?"More":"Less"} spent than {MONTHS[month===0?11:month-1]}
+                  {prevSpent>0?` (${fmt(prevSpent)})`:` (no data)`}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Top stats */}
+          <div style={card}>
+            <h3 style={{margin:"0 0 14px",fontSize:16}}>Highlights</h3>
+            <div style={{display:"flex",flexDirection:"column",gap:10}}>
+              {biggestCat && (spentByCategory[biggestCat.id]||0) > 0 && (
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:"1px solid #f3f4f6"}}>
+                  <div>
+                    <div style={{fontSize:13,color:"#9ca3af"}}>Biggest category</div>
+                    <div style={{fontWeight:600,display:"flex",alignItems:"center",gap:6}}>
+                      <span style={{width:10,height:10,borderRadius:"50%",background:biggestCat.color,display:"inline-block"}}/>
+                      {biggestCat.name}
+                    </div>
+                  </div>
+                  <span style={{fontWeight:700}}>{fmt(spentByCategory[biggestCat.id]||0)}</span>
+                </div>
+              )}
+              {mostExpensive && (
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderBottom:"1px solid #f3f4f6"}}>
+                  <div>
+                    <div style={{fontSize:13,color:"#9ca3af"}}>Most expensive transaction</div>
+                    <div style={{fontWeight:600}}>{mostExpensive.note||"—"}</div>
+                    <div style={{fontSize:12,color:"#9ca3af"}}>{mostExpensive.date}</div>
+                  </div>
+                  <span style={{fontWeight:700}}>{fmt(mostExpensive.amount)}</span>
+                </div>
+              )}
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0"}}>
+                <div>
+                  <div style={{fontSize:13,color:"#9ca3af"}}>Budget performance</div>
+                  <div style={{fontWeight:600}}>
+                    <span style={{color:"#10b981"}}>{underBudget.length} under</span>
+                    {" · "}
+                    <span style={{color:"#ef4444"}}>{overBudget.length} over</span>
+                  </div>
+                </div>
+                <div style={{fontSize:24}}>{overBudget.length===0?"🎉":"⚠️"}</div>
+              </div>
+            </div>
+          </div>
+
+          {/* 6 month bar chart */}
+          <div style={card}>
+            <h3 style={{margin:"0 0 16px",fontSize:16}}>Spending — Last 6 Months</h3>
+            <div style={{display:"flex",alignItems:"flex-end",gap:8,height:140,padding:"0 4px"}}>
+              {last6.map((m,i) => (
+                <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
+                  <div style={{fontSize:11,color:"#6b7280",fontWeight:600}}>{m.spent>0?`${Math.round(m.spent/1000*10)/10}k`:""}</div>
+                  <div style={{width:"100%",background:m.mk===mk?"#6366f1":"#e0e7ff",borderRadius:"6px 6px 0 0",height:`${Math.max((m.spent/maxSpent)*100,2)}%`,transition:"height .4s"}}/>
+                  <div style={{fontSize:11,color:"#6b7280",fontWeight:m.mk===mk?700:400}}>{m.label}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{display:"flex",gap:16,marginTop:12,fontSize:12,color:"#9ca3af"}}>
+              <span style={{display:"flex",alignItems:"center",gap:4}}><span style={{width:10,height:10,borderRadius:2,background:"#6366f1",display:"inline-block"}}/> Current month</span>
+              <span style={{display:"flex",alignItems:"center",gap:4}}><span style={{width:10,height:10,borderRadius:2,background:"#e0e7ff",display:"inline-block"}}/> Previous months</span>
+            </div>
+          </div>
+
+          {/* Over budget categories */}
+          {overBudget.length > 0 && (
+            <div style={{...card,border:"1.5px solid #fee2e2",background:"#fff5f5"}}>
+              <h3 style={{margin:"0 0 14px",fontSize:16,color:"#ef4444"}}>⚠️ Over Budget</h3>
+              {overBudget.map(c => (
+                <div key={c.id} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:"1px solid #fee2e2"}}>
+                  <span style={{display:"flex",alignItems:"center",gap:6,fontWeight:500}}>
+                    <span style={{width:10,height:10,borderRadius:"50%",background:c.color,display:"inline-block"}}/>
+                    {c.name}
+                  </span>
+                  <span style={{color:"#ef4444",fontWeight:700}}>+{fmt((spentByCategory[c.id]||0)-c.budget)} over</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   // ── Dashboard ──
   const unpaidCount = recurringBills.filter(b=>!isBillPaid(b)).length;
   return (
@@ -661,6 +814,7 @@ export default function App() {
             {saveStatus&&<span style={{fontSize:12,color:"#10b981"}}>{saveStatus}</span>}
           </div>
           <div style={{display:"flex",gap:8}}>
+            <button style={{...btn("#f3f4f6","#374151")}} onClick={()=>setView("insights")}>📊 Insights</button>
             <button style={{...btn("#f3f4f6","#374151"),position:"relative"}} onClick={()=>setView("bills")}>
               🔁 Bills
               {unpaidCount>0&&<span style={{position:"absolute",top:-6,right:-6,background:"#ef4444",color:"#fff",borderRadius:"50%",width:18,height:18,fontSize:11,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700}}>{unpaidCount}</span>}
