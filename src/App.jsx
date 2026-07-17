@@ -317,7 +317,7 @@ export default function App() {
             let date = "";
             if (!isNaN(rawDate)&&rawDate.length>3) { const d=XLSX.SSF.parse_date_code(Number(rawDate)); if(d) date=`${d.y}-${String(d.m).padStart(2,"0")}-${String(d.d).padStart(2,"0")}`; }
             else if (rawDate.includes("/")) { const [d,m,y]=rawDate.split("/"); const fy=y.length===2?`20${y}`:y; date=`${fy}-${m.padStart(2,"0")}-${d.padStart(2,"0")}`; }
-            else if (rawDate.includes("-")) { const p=rawDate.split("-"); if(p[0].length===4){date=rawDate;}else{const[a,b,c]=p;date=`20${a}-${c.padStart(2,"0")}-${b.padStart(2,"0")}`;} }
+            else if (rawDate.includes("-")) { const p=rawDate.split("-"); if(p[0].length===4){date=rawDate;}else if(p[2].length===4){const[d,m,y]=p;date=`${y}-${m.padStart(2,"0")}-${d.padStart(2,"0")}`;}else{const[a,b,c]=p;date=`20${a}-${c.padStart(2,"0")}-${b.padStart(2,"0")}`;} }
             if (!date) continue;
             const amount = Math.abs(parseFloat(String(row[amountIdx]||"0").replace(/[^0-9.-]/g,"")));
             if (isNaN(amount)||amount<=0) continue;
