@@ -281,7 +281,7 @@ export default function App() {
             }
             const amount = Math.abs(parseFloat(String(row[amountIdx] || "0").replace(/[^0-9.-]/g, "")));
             if (isNaN(amount) || amount <= 0) continue;
-            const desc = String(row[descIdx] || "").trim();
+            const desc = String(row[descIdx] || "").replace(/Value Date:\s*\d{2}\/\d{2}\/\d{4}/gi, "").replace(/Card\s+xx\d+/gi, "").trim()
             rows.push({ date, amount, note: desc, categoryName: catName });
           }
           processRows(rows);
